@@ -2,36 +2,66 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Template</title>
+    <title>AutoStrm Configuration</title>
 </head>
 <body>
-    <div id="TemplateConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div id="AutoStrmConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
         <div data-role="content">
             <div class="content-primary">
-                <form id="TemplateConfigForm">
-                    <div class="selectContainer">
-                        <label class="selectLabel" for="Options">Several Options</label>
-                        <select is="emby-select" id="Options" name="Options" class="emby-select-withcolor emby-select">
-                            <option id="optOneOption" value="OneOption">One Option</option>
-                            <option id="optAnotherOption" value="AnotherOption">Another Option</option>
-                        </select>
-                    </div>
+                <form id="AutoStrmConfigForm">
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="AnInteger">An Integer</label>
-                        <input id="AnInteger" name="AnInteger" type="number" is="emby-input" min="0" />
-                        <div class="fieldDescription">A Description</div>
+                        <label class="inputLabel inputLabelUnfocused" for="BaseStrmPath">Base STRM Path</label>
+                        <input id="BaseStrmPath" name="BaseStrmPath" type="text" is="emby-input" />
+                        <div class="fieldDescription">The base directory where STRM files will be created (e.g., /media/strm)</div>
                     </div>
+                    
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ApiEndpoint">API Endpoint</label>
+                        <input id="ApiEndpoint" name="ApiEndpoint" type="text" is="emby-input" readonly />
+                        <div class="fieldDescription">The API endpoint path (read-only)</div>
+                    </div>
+                    
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="FileNamePattern">File Name Pattern</label>
+                        <input id="FileNamePattern" name="FileNamePattern" type="text" is="emby-input" />
+                        <div class="fieldDescription">Pattern for naming STRM files. Use {name} for original name</div>
+                    </div>
+                    
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label class="emby-checkbox-label">
-                            <input id="TrueFalseSetting" name="TrueFalseCheckBox" type="checkbox" is="emby-checkbox" />
-                            <span>A Checkbox</span>
+                            <input id="EnableLogging" name="EnableLogging" type="checkbox" is="emby-checkbox" />
+                            <span>Enable Detailed Logging</span>
                         </label>
+                        <div class="fieldDescription">Enable detailed logging for debugging purposes</div>
                     </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="AString">A String</label>
-                        <input id="AString" name="AString" type="text" is="emby-input" />
-                        <div class="fieldDescription">Another Description</div>
+                    
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableParentFolders" name="EnableParentFolders" type="checkbox" is="emby-checkbox" />
+                            <span>Create Parent Folders</span>
+                        </label>
+                        <div class="fieldDescription">Create subfolders based on parent ID from the JSON data</div>
                     </div>
+                    
+                    <div class="detailsText">
+                        <h3>Usage Instructions</h3>
+                        <p>This plugin creates STRM files from JSON data received via POST requests.</p>
+                        <p><strong>Webhook URL:</strong> <code>http://your-jellyfin-server:port/AutoStrm/webhook</code></p>
+                        <p><strong>Health Check:</strong> <code>http://your-jellyfin-server:port/AutoStrm/health</code></p>
+                        <p>Send JSON data with the following structure:</p>
+                        <pre><code>{
+    "code": 0,
+    "data": [
+        {
+            "url": "https://example.com/video.mp4",
+            "name": "Video Name.mp4",
+            "parent": 123
+        }
+    ],
+    "msg": ""
+}</code></pre>
+                    </div>
+                    
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Save</span>
@@ -41,31 +71,34 @@
             </div>
         </div>
         <script type="text/javascript">
-            var TemplateConfig = {
+            var AutoStrmConfig = {
                 pluginUniqueId: 'eb5d7894-8eef-4b36-aa6f-5d124e828ce1'
             };
 
-            document.querySelector('#TemplateConfigPage')
+            document.querySelector('#AutoStrmConfigPage')
                 .addEventListener('pageshow', function() {
                     Dashboard.showLoadingMsg();
-                    ApiClient.getPluginConfiguration(TemplateConfig.pluginUniqueId).then(function (config) {
-                        document.querySelector('#Options').value = config.Options;
-                        document.querySelector('#AnInteger').value = config.AnInteger;
-                        document.querySelector('#TrueFalseSetting').checked = config.TrueFalseSetting;
-                        document.querySelector('#AString').value = config.AString;
+                    ApiClient.getPluginConfiguration(AutoStrmConfig.pluginUniqueId).then(function (config) {
+                        document.querySelector('#BaseStrmPath').value = config.BaseStrmPath || '/media/strm';
+                        document.querySelector('#ApiEndpoint').value = config.ApiEndpoint || '/AutoStrm/webhook';
+                        document.querySelector('#FileNamePattern').value = config.FileNamePattern || '{name}';
+                        document.querySelector('#EnableLogging').checked = config.EnableLogging || false;
+                        document.querySelector('#EnableParentFolders').checked = config.EnableParentFolders || false;
                         Dashboard.hideLoadingMsg();
                     });
                 });
 
-            document.querySelector('#TemplateConfigForm')
+            document.querySelector('#AutoStrmConfigForm')
                 .addEventListener('submit', function(e) {
                 Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(TemplateConfig.pluginUniqueId).then(function (config) {
-                    config.Options = document.querySelector('#Options').value;
-                    config.AnInteger = document.querySelector('#AnInteger').value;
-                    config.TrueFalseSetting = document.querySelector('#TrueFalseSetting').checked;
-                    config.AString = document.querySelector('#AString').value;
-                    ApiClient.updatePluginConfiguration(TemplateConfig.pluginUniqueId, config).then(function (result) {
+                ApiClient.getPluginConfiguration(AutoStrmConfig.pluginUniqueId).then(function (config) {
+                    config.BaseStrmPath = document.querySelector('#BaseStrmPath').value;
+                    config.ApiEndpoint = document.querySelector('#ApiEndpoint').value;
+                    config.FileNamePattern = document.querySelector('#FileNamePattern').value;
+                    config.EnableLogging = document.querySelector('#EnableLogging').checked;
+                    config.EnableParentFolders = document.querySelector('#EnableParentFolders').checked;
+                    
+                    ApiClient.updatePluginConfiguration(AutoStrmConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });
                 });

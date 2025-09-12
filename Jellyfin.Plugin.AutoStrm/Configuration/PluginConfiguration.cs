@@ -1,22 +1,6 @@
 using MediaBrowser.Model.Plugins;
 
-namespace Jellyfin.Plugin.Template.Configuration;
-
-/// <summary>
-/// The configuration options.
-/// </summary>
-public enum SomeOptions
-{
-    /// <summary>
-    /// Option one.
-    /// </summary>
-    OneOption,
-
-    /// <summary>
-    /// Second option.
-    /// </summary>
-    AnotherOption
-}
+namespace Jellyfin.Plugin.AutoStrm.Configuration;
 
 /// <summary>
 /// Plugin configuration.
@@ -28,30 +12,36 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public PluginConfiguration()
     {
-        // set default options here
-        Options = SomeOptions.AnotherOption;
-        TrueFalseSetting = true;
-        AnInteger = 2;
-        AString = "string";
+        // Set default options
+        BaseStrmPath = "/media/strm";
+        EnableLogging = true;
+        ApiEndpoint = "/AutoStrm/webhook";
+        EnableParentFolders = true;
+        FileNamePattern = "{name}";
     }
 
     /// <summary>
-    /// Gets or sets a value indicating whether some true or false setting is enabled..
+    /// Gets or sets the base path where STRM files will be created.
     /// </summary>
-    public bool TrueFalseSetting { get; set; }
+    public string BaseStrmPath { get; set; }
 
     /// <summary>
-    /// Gets or sets an integer setting.
+    /// Gets or sets a value indicating whether logging is enabled.
     /// </summary>
-    public int AnInteger { get; set; }
+    public bool EnableLogging { get; set; }
 
     /// <summary>
-    /// Gets or sets a string setting.
+    /// Gets or sets the API endpoint path.
     /// </summary>
-    public string AString { get; set; }
+    public string ApiEndpoint { get; set; }
 
     /// <summary>
-    /// Gets or sets an enum option.
+    /// Gets or sets a value indicating whether to create parent folders based on parent ID.
     /// </summary>
-    public SomeOptions Options { get; set; }
+    public bool EnableParentFolders { get; set; }
+
+    /// <summary>
+    /// Gets or sets the file name pattern for STRM files.
+    /// </summary>
+    public string FileNamePattern { get; set; }
 }
