@@ -15,10 +15,10 @@ public class WebhookData
     public int Code { get; set; }
 
     /// <summary>
-    /// Gets or sets the data array containing media items.
+    /// Gets the data array containing media items.
     /// </summary>
     [JsonPropertyName("data")]
-    public Collection<MediaItem> Data { get; set; } = new();
+    public Collection<MediaItem> Data { get; } = new();
 
     /// <summary>
     /// Gets or sets the message.

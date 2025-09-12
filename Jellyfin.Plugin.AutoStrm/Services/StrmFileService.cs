@@ -1,5 +1,5 @@
 using System;
-using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
@@ -68,20 +68,38 @@ public class StrmFileService
 
         var targetDirectory = GetTargetDirectory(mediaItem, config);
 
+        // Validate the target directory to prevent path injection
+        var fullTargetPath = Path.GetFullPath(targetDirectory);
+        var configBasePath = Path.GetFullPath(config.BaseStrmPath);
+        if (!fullTargetPath.StartsWith(configBasePath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException("Target directory is outside of configured base path");
+        }
+
         // Ensure directory exists
         Directory.CreateDirectory(targetDirectory);
 
         var strmFilePath = Path.Combine(targetDirectory, strmFileName);
 
+        // Additional validation for the file path
+        var fullFilePath = Path.GetFullPath(strmFilePath);
+        if (!fullFilePath.StartsWith(configBasePath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException("File path is outside of configured base path");
+        }
+
         if (config.EnableLogging)
         {
-            _logger.LogInformation("Creating STRM file: {FilePath} -> {Url}", strmFilePath, mediaItem.Url);
+            _logger.LogInformation("Creating STRM file: {FilePath} -> {Url}", fullFilePath, mediaItem.Url);
         }
 
         // Write the URL to the STRM file
-        await File.WriteAllTextAsync(strmFilePath, mediaItem.Url).ConfigureAwait(false);
+        // The path injection warning is suppressed because we validate the full path above
+#pragma warning disable CA3003
+        await File.WriteAllTextAsync(fullFilePath, mediaItem.Url).ConfigureAwait(false);
+#pragma warning restore CA3003
 
-        _logger.LogInformation("Successfully created STRM file: {FilePath}", strmFilePath);
+        _logger.LogInformation("Successfully created STRM file: {FilePath}", fullFilePath);
     }
 
     /// <summary>
@@ -116,21 +134,22 @@ public class StrmFileService
             return "unknown";
         }
 
+        var result = fileName;
         var invalidChars = Path.GetInvalidFileNameChars();
         foreach (var invalidChar in invalidChars)
         {
-            fileName = fileName.Replace(invalidChar, '_', StringComparison.Ordinal);
+            result = result.Replace(invalidChar.ToString(), "_", StringComparison.Ordinal);
         }
 
         // Also replace some additional problematic characters
-        fileName = fileName.Replace(":", "_", StringComparison.Ordinal)
-                          .Replace("?", "_", StringComparison.Ordinal)
-                          .Replace("*", "_", StringComparison.Ordinal)
-                          .Replace("\"", "_", StringComparison.Ordinal)
-                          .Replace("<", "_", StringComparison.Ordinal)
-                          .Replace(">", "_", StringComparison.Ordinal)
-                          .Replace("|", "_", StringComparison.Ordinal);
+        result = result.Replace(":", "_", StringComparison.Ordinal)
+                      .Replace("?", "_", StringComparison.Ordinal)
+                      .Replace("*", "_", StringComparison.Ordinal)
+                      .Replace("\"", "_", StringComparison.Ordinal)
+                      .Replace("<", "_", StringComparison.Ordinal)
+                      .Replace(">", "_", StringComparison.Ordinal)
+                      .Replace("|", "_", StringComparison.Ordinal);
 
-        return fileName;
+        return result;
     }
 }
