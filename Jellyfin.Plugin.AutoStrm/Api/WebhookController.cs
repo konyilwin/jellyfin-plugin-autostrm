@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.AutoStrm.Models;
 using Jellyfin.Plugin.AutoStrm.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -14,7 +15,7 @@ namespace Jellyfin.Plugin.AutoStrm.Api;
 /// Webhook API controller for receiving media data.
 /// </summary>
 [ApiController]
-[Route("AutoStrm")]
+[Route("plugins/autostrm")]
 [Produces("application/json")]
 public class WebhookController : ControllerBase
 {
@@ -29,10 +30,11 @@ public class WebhookController : ControllerBase
     /// <summary>
     /// Initializes a new instance of the <see cref="WebhookController"/> class.
     /// </summary>
-    public WebhookController()
+    /// <param name="logger">The logger.</param>
+    public WebhookController(ILogger<WebhookController> logger)
     {
-        _logger = Microsoft.Extensions.Logging.Abstractions.NullLogger<WebhookController>.Instance;
-        _strmFileService = new StrmFileService(_logger);
+        _logger = logger;
+        _strmFileService = new StrmFileService(logger);
     }
 
     /// <summary>
@@ -40,6 +42,7 @@ public class WebhookController : ControllerBase
     /// </summary>
     /// <returns>A response indicating success or failure.</returns>
     [HttpPost("webhook")]
+    [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -53,6 +56,8 @@ public class WebhookController : ControllerBase
             using var reader = new StreamReader(Request.Body);
             var requestBody = await reader.ReadToEndAsync().ConfigureAwait(false);
 
+            _logger.LogInformation("Request body received: {Length} characters", requestBody?.Length ?? 0);
+
             if (string.IsNullOrEmpty(requestBody))
             {
                 _logger.LogWarning("Empty request body received");
@@ -62,10 +67,47 @@ public class WebhookController : ControllerBase
             _logger.LogDebug("Request body: {RequestBody}", requestBody);
 
             // Parse JSON
-            WebhookData webhookData;
+            WebhookData? webhookData;
             try
             {
-                webhookData = JsonSerializer.Deserialize<WebhookData>(requestBody, JsonOptions)!;
+                _logger.LogDebug("About to deserialize JSON: {RequestBody}", requestBody);
+                webhookData = JsonSerializer.Deserialize<WebhookData>(requestBody, JsonOptions);
+                _logger.LogInformation(
+                    "JSON parsed successfully. Code: {Code}, Data count: {Count}",
+                    webhookData?.Code,
+                    webhookData?.Data?.Count ?? 0);
+                // Log first item for debugging
+                if (webhookData?.Data?.Count > 0)
+                {
+                    var firstItem = webhookData.Data[0];
+                    _logger.LogDebug(
+                        "First item - URL: {Url}, Name: {Name}, Parent: {Parent}",
+                        firstItem.Url,
+                        firstItem.Name,
+                        firstItem.Parent);
+                }
+                else
+                {
+                    _logger.LogWarning("Data array is empty after deserialization");
+                    // Try to deserialize as dynamic to see what we actually got
+                    try
+                    {
+                        using var document = JsonDocument.Parse(requestBody);
+                        var root = document.RootElement;
+                        if (root.TryGetProperty("data", out var dataElement))
+                        {
+                            _logger.LogWarning("Raw data element type: {Type}, Length: {Length}", dataElement.ValueKind, dataElement.GetArrayLength());
+                        }
+                        else
+                        {
+                            _logger.LogWarning("No 'data' property found in JSON");
+                        }
+                    }
+                    catch (Exception debugEx)
+                    {
+                        _logger.LogError(debugEx, "Failed to parse JSON for debugging");
+                    }
+                }
             }
             catch (JsonException ex)
             {
@@ -96,7 +138,10 @@ public class WebhookController : ControllerBase
 
             if (webhookData.Data == null || webhookData.Data.Count == 0)
             {
-                _logger.LogWarning("No media items found in webhook data");
+                _logger.LogWarning(
+                    "No media items found in webhook data. Data is null: {IsNull}, Count: {Count}",
+                    webhookData.Data == null,
+                    webhookData.Data?.Count ?? 0);
                 return BadRequest(new { error = "No media items found" });
             }
 
@@ -132,6 +177,7 @@ public class WebhookController : ControllerBase
     /// </summary>
     /// <returns>A response indicating the service is running.</returns>
     [HttpGet("health")]
+    [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult HealthCheck()
     {
