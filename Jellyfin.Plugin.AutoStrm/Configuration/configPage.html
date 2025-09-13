@@ -43,11 +43,37 @@
                         <div class="fieldDescription">Create subfolders based on parent ID from the JSON data</div>
                     </div>
                     
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableMediaTypeDetection" name="EnableMediaTypeDetection" type="checkbox" is="emby-checkbox" />
+                            <span>Enable Media Type Detection</span>
+                        </label>
+                        <div class="fieldDescription">Automatically detect movies vs TV series from filenames</div>
+                    </div>
+                    
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="OrganizeByMediaType" name="OrganizeByMediaType" type="checkbox" is="emby-checkbox" />
+                            <span>Organize by Media Type</span>
+                        </label>
+                        <div class="fieldDescription">Automatically organize into Movies and TV Shows folders</div>
+                    </div>
+                    
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="DuplicateHandling">Duplicate Handling</label>
+                        <select is="emby-select" id="DuplicateHandling" name="DuplicateHandling" class="emby-select-withcolor emby-select">
+                            <option value="0">Overwrite</option>
+                            <option value="1">Skip</option>
+                            <option value="2">Create Versions</option>
+                        </select>
+                        <div class="fieldDescription">How to handle duplicate files when same data is sent again</div>
+                    </div>
+                    
                     <div class="detailsText">
                         <h3>Usage Instructions</h3>
                         <p>This plugin creates STRM files from JSON data received via POST requests.</p>
-                        <p><strong>Webhook URL:</strong> <code>http://your-jellyfin-server:port/AutoStrm/webhook</code></p>
-                        <p><strong>Health Check:</strong> <code>http://your-jellyfin-server:port/AutoStrm/health</code></p>
+                        <p><strong>Webhook URL:</strong> <code>http://your-jellyfin-server:port/plugins/autostrm/webhook</code></p>
+                        <p><strong>Health Check:</strong> <code>http://your-jellyfin-server:port/plugins/autostrm/health</code></p>
                         <p>Send JSON data with the following structure:</p>
                         <pre><code>{
     "code": 0,
@@ -60,6 +86,12 @@
     ],
     "msg": ""
 }</code></pre>
+                        <p><strong>File Organization:</strong></p>
+                        <ul>
+                            <li>Movies: <code>/Movies/Movie Name.strm</code></li>
+                            <li>TV Shows: <code>/TV Shows/Series Name/Season XX/Episode.strm</code></li>
+                        </ul>
+                        <p><strong>Note:</strong> You may need to manually trigger a library scan in Jellyfin to see new files.</p>
                     </div>
                     
                     <div>
@@ -80,10 +112,13 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(AutoStrmConfig.pluginUniqueId).then(function (config) {
                         document.querySelector('#BaseStrmPath').value = config.BaseStrmPath || '/media/strm';
-                        document.querySelector('#ApiEndpoint').value = config.ApiEndpoint || '/AutoStrm/webhook';
+                        document.querySelector('#ApiEndpoint').value = config.ApiEndpoint || '/plugins/autostrm/webhook';
                         document.querySelector('#FileNamePattern').value = config.FileNamePattern || '{name}';
                         document.querySelector('#EnableLogging').checked = config.EnableLogging || false;
                         document.querySelector('#EnableParentFolders').checked = config.EnableParentFolders || false;
+                        document.querySelector('#EnableMediaTypeDetection').checked = config.EnableMediaTypeDetection || true;
+                        document.querySelector('#OrganizeByMediaType').checked = config.OrganizeByMediaType || true;
+                        document.querySelector('#DuplicateHandling').value = config.DuplicateHandling || 0;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -97,6 +132,9 @@
                     config.FileNamePattern = document.querySelector('#FileNamePattern').value;
                     config.EnableLogging = document.querySelector('#EnableLogging').checked;
                     config.EnableParentFolders = document.querySelector('#EnableParentFolders').checked;
+                    config.EnableMediaTypeDetection = document.querySelector('#EnableMediaTypeDetection').checked;
+                    config.OrganizeByMediaType = document.querySelector('#OrganizeByMediaType').checked;
+                    config.DuplicateHandling = document.querySelector('#DuplicateHandling').value;
                     
                     ApiClient.updatePluginConfiguration(AutoStrmConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);

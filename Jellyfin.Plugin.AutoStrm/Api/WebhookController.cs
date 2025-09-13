@@ -173,7 +173,8 @@ public class WebhookController : ControllerBase
             {
                 success = true,
                 message = "STRM files created successfully",
-                processed_count = webhookData.Data.Count
+                processed_count = webhookData.Data.Count,
+                note = "Library scan may be needed to see new files in Jellyfin"
             });
         }
         catch (Exception ex)

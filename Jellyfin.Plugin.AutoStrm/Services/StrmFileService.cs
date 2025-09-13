@@ -79,13 +79,22 @@ public class StrmFileService
         // Ensure directory exists
         Directory.CreateDirectory(targetDirectory);
 
-        var strmFilePath = Path.Combine(targetDirectory, strmFileName);
+        // Handle duplicates based on configuration
+        var finalFileName = HandleDuplicateFile(targetDirectory, strmFileName, config.DuplicateHandling);
+        var strmFilePath = Path.Combine(targetDirectory, finalFileName);
 
         // Additional validation for the file path
         var fullFilePath = Path.GetFullPath(strmFilePath);
         if (!fullFilePath.StartsWith(configBasePath, StringComparison.OrdinalIgnoreCase))
         {
             throw new UnauthorizedAccessException("File path is outside of configured base path");
+        }
+
+        // Check if we should skip this file
+        if (string.IsNullOrEmpty(finalFileName))
+        {
+            _logger.LogInformation("Skipping duplicate file: {OriginalPath}", Path.Combine(targetDirectory, strmFileName));
+            return;
         }
 
         if (config.EnableLogging)
@@ -103,24 +112,139 @@ public class StrmFileService
     }
 
     /// <summary>
+    /// Handles duplicate file scenarios based on configuration.
+    /// </summary>
+    /// <param name="directory">The target directory.</param>
+    /// <param name="fileName">The original filename.</param>
+    /// <param name="duplicateHandling">The duplicate handling strategy.</param>
+    /// <returns>The final filename to use, or null/empty to skip.</returns>
+    private static string HandleDuplicateFile(string directory, string fileName, DuplicateHandling duplicateHandling)
+    {
+        var filePath = Path.Combine(directory, fileName);
+
+        // Path injection warning suppressed because we validate all paths before calling this method
+#pragma warning disable CA3003
+        if (!File.Exists(filePath))
+#pragma warning restore CA3003
+        {
+            // File doesn't exist, use original name
+            return fileName;
+        }
+
+        return duplicateHandling switch
+        {
+            DuplicateHandling.Skip => string.Empty, // Return empty to indicate skip
+            DuplicateHandling.Overwrite => fileName, // Use original name (will overwrite)
+            DuplicateHandling.CreateVersions => CreateVersionedFileName(directory, fileName),
+            _ => fileName
+        };
+    }
+
+    /// <summary>
+    /// Creates a versioned filename for duplicates.
+    /// </summary>
+    /// <param name="directory">The target directory.</param>
+    /// <param name="originalFileName">The original filename.</param>
+    /// <returns>A versioned filename.</returns>
+    private static string CreateVersionedFileName(string directory, string originalFileName)
+    {
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
+        var extension = Path.GetExtension(originalFileName);
+        var counter = 1;
+
+        string versionedFileName;
+        string versionedFilePath;
+
+        do
+        {
+            versionedFileName = $"{fileNameWithoutExtension}_{counter}{extension}";
+            versionedFilePath = Path.Combine(directory, versionedFileName);
+            counter++;
+
+            // Path injection warning suppressed because we validate all paths before calling this method
+#pragma warning disable CA3003
+        }
+        while (File.Exists(versionedFilePath));
+#pragma warning restore CA3003
+
+        return versionedFileName;
+    }
+
+    /// <summary>
     /// Gets the target directory for the STRM file.
     /// </summary>
     /// <param name="mediaItem">The media item.</param>
     /// <param name="config">The plugin configuration.</param>
     /// <returns>The target directory path.</returns>
-    private static string GetTargetDirectory(MediaItem mediaItem, PluginConfiguration config)
-    {
-        var baseDirectory = config.BaseStrmPath;
+    private string GetTargetDirectory(MediaItem mediaItem, PluginConfiguration config)
+{
+    var baseDirectory = config.BaseStrmPath;
+    var targetPath = baseDirectory;
 
-        if (config.EnableParentFolders && mediaItem.Parent > 0)
+    if (config.EnableLogging)
+    {
+        _logger.LogInformation("GetTargetDirectory - EnableMediaTypeDetection: {Detection}, OrganizeByMediaType: {Organize}", config.EnableMediaTypeDetection, config.OrganizeByMediaType);
+    }
+
+    // Apply media type detection and organization if enabled
+    if (config.EnableMediaTypeDetection && config.OrganizeByMediaType)
+    {
+        var mediaType = MediaTypeDetector.DetectMediaType(mediaItem.Name);
+        if (config.EnableLogging)
         {
-            // Create a subfolder based on parent ID
-            var parentFolder = $"parent_{mediaItem.Parent.ToString(CultureInfo.InvariantCulture)}";
-            return Path.Combine(baseDirectory, parentFolder);
+            _logger.LogInformation("Detected media type: {MediaType} for filename: {Name}", mediaType, mediaItem.Name);
         }
 
-        return baseDirectory;
+        string typeFolder;
+        string contentFolder;
+
+        if (mediaType == MediaType.TvSeries)
+        {
+            typeFolder = "TV Shows";
+            var (seriesName, season, episode) = MediaTypeDetector.ExtractSeriesInfo(mediaItem.Name);
+            if (config.EnableLogging)
+            {
+                _logger.LogInformation("TV Series info - Name: {SeriesName}, Season: {Season}, Episode: {Episode}", seriesName, season, episode);
+            }
+
+            if (!string.IsNullOrEmpty(seriesName))
+            {
+                contentFolder = season.HasValue ? Path.Combine(SanitizeFileName(seriesName), $"Season {season:D2}") : SanitizeFileName(seriesName);
+            }
+            else
+            {
+                contentFolder = "Unknown Series";
+            }
+        }
+        else
+        {
+            typeFolder = "Movies";
+            // For movies, don't create individual movie folders - place directly in Movies folder
+            contentFolder = string.Empty;
+        }
+
+        targetPath = string.IsNullOrEmpty(contentFolder) ?
+            Path.Combine(baseDirectory, typeFolder) : Path.Combine(baseDirectory, typeFolder, contentFolder);
+        if (config.EnableLogging)
+        {
+            _logger.LogInformation("Target path after media type organization: {Path}", targetPath);
+        }
     }
+
+    // Optionally include parent folder if enabled
+    if (config.EnableParentFolders && mediaItem.Parent > 0)
+    {
+        var parentFolder = $"parent_{mediaItem.Parent.ToString(CultureInfo.InvariantCulture)}";
+        targetPath = config.OrganizeByMediaType ?
+            Path.Combine(targetPath, parentFolder) : Path.Combine(baseDirectory, parentFolder);
+        if (config.EnableLogging)
+        {
+            _logger.LogInformation("Target path after parent folder: {Path}", targetPath);
+        }
+    }
+
+    return targetPath;
+}
 
     /// <summary>
     /// Sanitizes a file name by removing invalid characters.
