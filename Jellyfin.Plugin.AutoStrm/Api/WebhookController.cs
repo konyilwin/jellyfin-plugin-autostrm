@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -21,7 +22,8 @@ public class WebhookController : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
     };
 
     private readonly ILogger<WebhookController> _logger;
@@ -76,37 +78,46 @@ public class WebhookController : ControllerBase
                     "JSON parsed successfully. Code: {Code}, Data count: {Count}",
                     webhookData?.Code,
                     webhookData?.Data?.Count ?? 0);
+
+                // If Data is empty but we know there's data in the JSON, try manual approach
+                if (webhookData != null && (webhookData.Data == null || webhookData.Data.Count == 0))
+                {
+                    _logger.LogWarning("MANUAL FALLBACK TRIGGERED - Data array is empty, attempting manual deserialization");
+
+                    using var document = JsonDocument.Parse(requestBody);
+                    var root = document.RootElement;
+                    if (root.TryGetProperty("data", out var dataElement) && dataElement.GetArrayLength() > 0)
+                    {
+                        var manualItems = JsonSerializer.Deserialize<List<MediaItem>>(dataElement.GetRawText(), JsonOptions);
+                        if (manualItems != null && manualItems.Count > 0)
+                        {
+                            webhookData.Data = manualItems;
+                            _logger.LogInformation("SUCCESS: Populated Data array manually with {Count} items", manualItems.Count);
+                        }
+                        else
+                        {
+                            _logger.LogError("FAILED: Manual deserialization returned null or empty list");
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogError("FAILED: Could not find data element in JSON or it was empty");
+                    }
+                }
+
                 // Log first item for debugging
                 if (webhookData?.Data?.Count > 0)
                 {
                     var firstItem = webhookData.Data[0];
                     _logger.LogDebug(
-                        "First item - URL: {Url}, Name: {Name}, Parent: {Parent}",
+                        "FINAL RESULT - First item - URL: {Url}, Name: {Name}, Parent: {Parent}",
                         firstItem.Url,
                         firstItem.Name,
                         firstItem.Parent);
                 }
                 else
                 {
-                    _logger.LogWarning("Data array is empty after deserialization");
-                    // Try to deserialize as dynamic to see what we actually got
-                    try
-                    {
-                        using var document = JsonDocument.Parse(requestBody);
-                        var root = document.RootElement;
-                        if (root.TryGetProperty("data", out var dataElement))
-                        {
-                            _logger.LogWarning("Raw data element type: {Type}, Length: {Length}", dataElement.ValueKind, dataElement.GetArrayLength());
-                        }
-                        else
-                        {
-                            _logger.LogWarning("No 'data' property found in JSON");
-                        }
-                    }
-                    catch (Exception debugEx)
-                    {
-                        _logger.LogError(debugEx, "Failed to parse JSON for debugging");
-                    }
+                    _logger.LogError("FINAL RESULT - Data array is still empty after all attempts");
                 }
             }
             catch (JsonException ex)
