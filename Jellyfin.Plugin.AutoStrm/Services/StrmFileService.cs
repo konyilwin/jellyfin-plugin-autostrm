@@ -63,11 +63,19 @@ public class StrmFileService
     /// <returns>A task representing the asynchronous operation.</returns>
     private async Task CreateStrmFileAsync(MediaItem mediaItem, PluginConfiguration config)
     {
-        var fileName = SanitizeFileName(mediaItem.Name);
+        // Use JellyfinFilenameService to create a proper filename instead of just sanitizing
+        var jellyfinFriendlyName = JellyfinFilenameService.CreateJellyfinFilename(mediaItem.Name, _logger);
+        // Apply the configured filename pattern
+        var fileName = ApplyFilenamePattern(jellyfinFriendlyName, config.FileNamePattern);
+        // Ensure we have a valid filename
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            _logger.LogWarning("Generated filename is empty for media item: {MediaName}", mediaItem.Name);
+            fileName = "unknown_file";
+        }
 
-        // Remove the original extension and add .strm
-        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
-        var strmFileName = $"{fileNameWithoutExtension}.strm";
+        // Add .strm extension
+        var strmFileName = $"{fileName}.strm";
 
         var targetDirectory = GetTargetDirectoryWithAutoSplit(mediaItem, config);
 
@@ -103,6 +111,7 @@ public class StrmFileService
         if (config.EnableLogging)
         {
             _logger.LogInformation("Creating STRM file: {FilePath} -> {Url}", fullFilePath, mediaItem.Url);
+            _logger.LogInformation("Original filename: {Original} -> Jellyfin filename: {JellyfinName}", mediaItem.Name, jellyfinFriendlyName);
         }
 
         // Write the URL to the STRM file
@@ -112,6 +121,27 @@ public class StrmFileService
 #pragma warning restore CA3003
 
         _logger.LogInformation("Successfully created STRM file: {FilePath}", fullFilePath);
+    }
+
+    /// <summary>
+    /// Applies the filename pattern to the jellyfin-friendly name.
+    /// </summary>
+    /// <param name="jellyfinName">The jellyfin-friendly filename.</param>
+    /// <param name="pattern">The filename pattern.</param>
+    /// <returns>The final filename with pattern applied.</returns>
+    private static string ApplyFilenamePattern(string jellyfinName, string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return jellyfinName;
+        }
+
+        // Replace {name} placeholder with the jellyfin-friendly name
+        var result = pattern.Replace("{name}", jellyfinName, StringComparison.OrdinalIgnoreCase);
+        // You can add more placeholders here in the future, like:
+        // result = result.Replace("{year}", extractedYear, StringComparison.OrdinalIgnoreCase);
+        // result = result.Replace("{quality}", extractedQuality, StringComparison.OrdinalIgnoreCase);
+        return result;
     }
 
     /// <summary>
@@ -167,7 +197,7 @@ public class StrmFileService
     }
 
     /// <summary>
-    /// Gets the movie path with automatic alphabetical splitting.
+    /// Gets the movie path with automatic alphabetical splitting - UPDATED VERSION.
     /// </summary>
     /// <param name="mediaItem">The media item.</param>
     /// <param name="baseDirectory">The base directory.</param>
@@ -177,11 +207,18 @@ public class StrmFileService
     {
         var moviesFolder = Path.Combine(baseDirectory, "Movies");
 
-        // Get the sanitized movie name for grouping
-        var (movieName, _) = MediaTypeDetector.ExtractMovieInfo(mediaItem.Name);
+        // Use Jellyfin-friendly name for grouping - this ensures consistency
+        var jellyfinFriendlyName = JellyfinFilenameService.CreateJellyfinFilename(mediaItem.Name, _logger);
+        // Extract movie info from the cleaned name
+        var (movieName, _) = MediaTypeDetector.ExtractMovieInfo(jellyfinFriendlyName);
         if (string.IsNullOrEmpty(movieName))
         {
-            movieName = Path.GetFileNameWithoutExtension(mediaItem.Name);
+            movieName = jellyfinFriendlyName;
+        }
+
+        if (config.EnableLogging)
+        {
+            _logger.LogDebug("Movie path generation - Original: {Original}, Jellyfin: {Jellyfin}, Extracted: {Extracted}", mediaItem.Name, jellyfinFriendlyName, movieName);
         }
 
         // Create alphabetical grouping (A-C, D-F, etc.)
@@ -209,7 +246,7 @@ public class StrmFileService
     }
 
     /// <summary>
-    /// Gets the TV series path with automatic season splitting.
+    /// Gets the TV series path with automatic season splitting - UPDATED VERSION.
     /// </summary>
     /// <param name="mediaItem">The media item.</param>
     /// <param name="baseDirectory">The base directory.</param>
@@ -218,11 +255,18 @@ public class StrmFileService
     private string GetTvSeriesPath(MediaItem mediaItem, string baseDirectory, PluginConfiguration config)
     {
         var tvShowsFolder = Path.Combine(baseDirectory, "TV Shows");
-        var (seriesName, season, episode) = MediaTypeDetector.ExtractSeriesInfo(mediaItem.Name);
+        // Use Jellyfin-friendly name for consistency
+        var jellyfinFriendlyName = JellyfinFilenameService.CreateJellyfinFilename(mediaItem.Name, _logger);
+        var (seriesName, season, episode) = MediaTypeDetector.ExtractSeriesInfo(jellyfinFriendlyName);
 
         if (string.IsNullOrEmpty(seriesName))
         {
             seriesName = "Unknown Series";
+        }
+
+        if (config.EnableLogging)
+        {
+            _logger.LogDebug("TV path generation - Original: {Original}, Jellyfin: {Jellyfin}, Series: {Series}, S{Season}E{Episode}", mediaItem.Name, jellyfinFriendlyName, seriesName, season, episode);
         }
 
         var seriesFolder = Path.Combine(tvShowsFolder, SanitizeFileName(seriesName));
@@ -258,7 +302,7 @@ public class StrmFileService
                 var currentFileCount = Directory.GetFiles(seriesFolder, "*.strm").Length;
                 if (currentFileCount >= MaxFilesPerFolder)
                 {
-                    var subGroup = GetSubGroup(seriesFolder, mediaItem.Name, "episode");
+                    var subGroup = GetSubGroup(seriesFolder, jellyfinFriendlyName, "episode");
                     seriesFolder = Path.Combine(seriesFolder, subGroup);
                 }
             }
@@ -400,6 +444,7 @@ public class StrmFileService
 
     /// <summary>
     /// Sanitizes a file name by removing invalid characters.
+    /// This method is kept for backward compatibility and edge cases.
     /// </summary>
     /// <param name="fileName">The original file name.</param>
     /// <returns>The sanitized file name.</returns>
