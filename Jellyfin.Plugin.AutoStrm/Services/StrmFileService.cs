@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.AutoStrm.Configuration;
 using Jellyfin.Plugin.AutoStrm.Models;
@@ -10,10 +11,12 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.AutoStrm.Services;
 
 /// <summary>
-/// Service for creating STRM files.
+/// Service for creating STRM files with automatic folder splitting for performance.
 /// </summary>
 public class StrmFileService
 {
+    private const int MaxFilesPerFolder = 400; // Safe limit below Jellyfin's ~500 file issue
+
     private readonly ILogger _logger;
 
     /// <summary>
@@ -66,7 +69,7 @@ public class StrmFileService
         var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
         var strmFileName = $"{fileNameWithoutExtension}.strm";
 
-        var targetDirectory = GetTargetDirectory(mediaItem, config);
+        var targetDirectory = GetTargetDirectoryWithAutoSplit(mediaItem, config);
 
         // Validate the target directory to prevent path injection
         var fullTargetPath = Path.GetFullPath(targetDirectory);
@@ -109,6 +112,231 @@ public class StrmFileService
 #pragma warning restore CA3003
 
         _logger.LogInformation("Successfully created STRM file: {FilePath}", fullFilePath);
+    }
+
+    /// <summary>
+    /// Gets the target directory with automatic folder splitting for optimal performance.
+    /// </summary>
+    /// <param name="mediaItem">The media item.</param>
+    /// <param name="config">The plugin configuration.</param>
+    /// <returns>The target directory path with auto-splitting applied.</returns>
+    private string GetTargetDirectoryWithAutoSplit(MediaItem mediaItem, PluginConfiguration config)
+    {
+        var baseDirectory = config.BaseStrmPath;
+        var targetPath = baseDirectory;
+
+        if (config.EnableLogging)
+        {
+            _logger.LogInformation(
+                "GetTargetDirectory - EnableMediaTypeDetection: {Detection}, OrganizeByMediaType: {Organize}",
+                config.EnableMediaTypeDetection,
+                config.OrganizeByMediaType);
+        }
+
+        // Apply media type detection and organization if enabled
+        if (config.EnableMediaTypeDetection && config.OrganizeByMediaType)
+        {
+            var mediaType = MediaTypeDetector.DetectMediaType(mediaItem.Name);
+            if (config.EnableLogging)
+            {
+                _logger.LogInformation("Detected media type: {MediaType} for filename: {Name}", mediaType, mediaItem.Name);
+            }
+
+            if (mediaType == MediaType.TvSeries)
+            {
+                targetPath = GetTvSeriesPath(mediaItem, baseDirectory, config);
+            }
+            else
+            {
+                targetPath = GetMoviePath(mediaItem, baseDirectory, config);
+            }
+        }
+
+        // Optionally include parent folder if enabled
+        if (config.EnableParentFolders && mediaItem.Parent > 0)
+        {
+            var parentFolder = $"parent_{mediaItem.Parent.ToString(CultureInfo.InvariantCulture)}";
+            targetPath = Path.Combine(targetPath, parentFolder);
+            if (config.EnableLogging)
+            {
+                _logger.LogInformation("Target path after parent folder: {Path}", targetPath);
+            }
+        }
+
+        return targetPath;
+    }
+
+    /// <summary>
+    /// Gets the movie path with automatic alphabetical splitting.
+    /// </summary>
+    /// <param name="mediaItem">The media item.</param>
+    /// <param name="baseDirectory">The base directory.</param>
+    /// <param name="config">The plugin configuration.</param>
+    /// <returns>The movie directory path with auto-splitting.</returns>
+    private string GetMoviePath(MediaItem mediaItem, string baseDirectory, PluginConfiguration config)
+    {
+        var moviesFolder = Path.Combine(baseDirectory, "Movies");
+
+        // Get the sanitized movie name for grouping
+        var (movieName, _) = MediaTypeDetector.ExtractMovieInfo(mediaItem.Name);
+        if (string.IsNullOrEmpty(movieName))
+        {
+            movieName = Path.GetFileNameWithoutExtension(mediaItem.Name);
+        }
+
+        // Create alphabetical grouping (A-C, D-F, etc.)
+        var alphabetGroup = GetAlphabeticalGroup(movieName);
+        var groupFolder = Path.Combine(moviesFolder, alphabetGroup);
+
+        // Check if we need to split further due to file count
+        if (Directory.Exists(groupFolder))
+        {
+            var currentFileCount = Directory.GetFiles(groupFolder, "*.strm").Length;
+            if (currentFileCount >= MaxFilesPerFolder)
+            {
+                // Create sub-groups within the alphabet group
+                var subGroup = GetSubGroup(groupFolder, movieName, "movie");
+                groupFolder = Path.Combine(groupFolder, subGroup);
+
+                if (config.EnableLogging)
+                {
+                    _logger.LogInformation("Movie folder split: {GroupFolder} (files: {FileCount})", groupFolder, currentFileCount);
+                }
+            }
+        }
+
+        return groupFolder;
+    }
+
+    /// <summary>
+    /// Gets the TV series path with automatic season splitting.
+    /// </summary>
+    /// <param name="mediaItem">The media item.</param>
+    /// <param name="baseDirectory">The base directory.</param>
+    /// <param name="config">The plugin configuration.</param>
+    /// <returns>The TV series directory path with auto-splitting.</returns>
+    private string GetTvSeriesPath(MediaItem mediaItem, string baseDirectory, PluginConfiguration config)
+    {
+        var tvShowsFolder = Path.Combine(baseDirectory, "TV Shows");
+        var (seriesName, season, episode) = MediaTypeDetector.ExtractSeriesInfo(mediaItem.Name);
+
+        if (string.IsNullOrEmpty(seriesName))
+        {
+            seriesName = "Unknown Series";
+        }
+
+        var seriesFolder = Path.Combine(tvShowsFolder, SanitizeFileName(seriesName));
+
+        if (season.HasValue)
+        {
+            var seasonFolder = Path.Combine(seriesFolder, $"Season {season:D2}");
+
+            // Check if season folder needs splitting due to too many episodes
+            if (Directory.Exists(seasonFolder))
+            {
+                var currentFileCount = Directory.GetFiles(seasonFolder, "*.strm").Length;
+                if (currentFileCount >= MaxFilesPerFolder)
+                {
+                    // Split large seasons into episode ranges (1-100, 101-200, etc.)
+                    var episodeRange = GetEpisodeRangeFolder(episode ?? 1);
+                    seasonFolder = Path.Combine(seasonFolder, episodeRange);
+
+                    if (config.EnableLogging)
+                    {
+                        _logger.LogInformation("Season folder split: {SeasonFolder} (files: {FileCount})", seasonFolder, currentFileCount);
+                    }
+                }
+            }
+
+            return seasonFolder;
+        }
+        else
+        {
+            // No season info, place in main series folder with potential splitting
+            if (Directory.Exists(seriesFolder))
+            {
+                var currentFileCount = Directory.GetFiles(seriesFolder, "*.strm").Length;
+                if (currentFileCount >= MaxFilesPerFolder)
+                {
+                    var subGroup = GetSubGroup(seriesFolder, mediaItem.Name, "episode");
+                    seriesFolder = Path.Combine(seriesFolder, subGroup);
+                }
+            }
+
+            return seriesFolder;
+        }
+    }
+
+    /// <summary>
+    /// Gets the alphabetical group for a movie name (A-C, D-F, etc.).
+    /// </summary>
+    /// <param name="name">The movie name.</param>
+    /// <returns>The alphabetical group folder name.</returns>
+    private static string GetAlphabeticalGroup(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return "0-9";
+        }
+
+        var firstChar = char.ToUpperInvariant(name[0]);
+
+        // Handle numbers and special characters
+        if (!char.IsLetter(firstChar))
+        {
+            return "0-9";
+        }
+
+        // Create groups: A-C, D-F, G-I, J-L, M-O, P-R, S-U, V-X, Y-Z
+        var groups = new[]
+        {
+            ("A-C", 'A', 'C'),
+            ("D-F", 'D', 'F'),
+            ("G-I", 'G', 'I'),
+            ("J-L", 'J', 'L'),
+            ("M-O", 'M', 'O'),
+            ("P-R", 'P', 'R'),
+            ("S-U", 'S', 'U'),
+            ("V-X", 'V', 'X'),
+            ("Y-Z", 'Y', 'Z')
+        };
+
+        foreach (var (groupName, startChar, endChar) in groups)
+        {
+            if (firstChar >= startChar && firstChar <= endChar)
+            {
+                return groupName;
+            }
+        }
+
+        return "Other";
+    }
+
+    /// <summary>
+    /// Gets an episode range folder for large seasons.
+    /// </summary>
+    /// <param name="episodeNumber">The episode number.</param>
+    /// <returns>The episode range folder name.</returns>
+    private static string GetEpisodeRangeFolder(int episodeNumber)
+    {
+        // Create ranges: 001-100, 101-200, 201-300, etc.
+        var rangeStart = (((episodeNumber - 1) / 100) * 100) + 1;
+        var rangeEnd = rangeStart + 99;
+        return $"Episodes {rangeStart:D3}-{rangeEnd:D3}";
+    }
+
+    /// <summary>
+    /// Gets a sub-group folder when the main group is too large.
+    /// </summary>
+    /// <param name="parentFolder">The parent folder path.</param>
+    /// <param name="itemName">The item name.</param>
+    /// <param name="prefix">The prefix for the sub-group.</param>
+    /// <returns>The sub-group folder name.</returns>
+    private static string GetSubGroup(string parentFolder, string itemName, string prefix)
+    {
+        // Create hash-based sub-groups for even distribution
+        var hash = Math.Abs(itemName.GetHashCode(StringComparison.Ordinal)) % 10;
+        return $"{prefix}_{hash:D2}";
     }
 
     /// <summary>
@@ -169,82 +397,6 @@ public class StrmFileService
 
         return versionedFileName;
     }
-
-    /// <summary>
-    /// Gets the target directory for the STRM file.
-    /// </summary>
-    /// <param name="mediaItem">The media item.</param>
-    /// <param name="config">The plugin configuration.</param>
-    /// <returns>The target directory path.</returns>
-    private string GetTargetDirectory(MediaItem mediaItem, PluginConfiguration config)
-{
-    var baseDirectory = config.BaseStrmPath;
-    var targetPath = baseDirectory;
-
-    if (config.EnableLogging)
-    {
-        _logger.LogInformation("GetTargetDirectory - EnableMediaTypeDetection: {Detection}, OrganizeByMediaType: {Organize}", config.EnableMediaTypeDetection, config.OrganizeByMediaType);
-    }
-
-    // Apply media type detection and organization if enabled
-    if (config.EnableMediaTypeDetection && config.OrganizeByMediaType)
-    {
-        var mediaType = MediaTypeDetector.DetectMediaType(mediaItem.Name);
-        if (config.EnableLogging)
-        {
-            _logger.LogInformation("Detected media type: {MediaType} for filename: {Name}", mediaType, mediaItem.Name);
-        }
-
-        string typeFolder;
-        string contentFolder;
-
-        if (mediaType == MediaType.TvSeries)
-        {
-            typeFolder = "TV Shows";
-            var (seriesName, season, episode) = MediaTypeDetector.ExtractSeriesInfo(mediaItem.Name);
-            if (config.EnableLogging)
-            {
-                _logger.LogInformation("TV Series info - Name: {SeriesName}, Season: {Season}, Episode: {Episode}", seriesName, season, episode);
-            }
-
-            if (!string.IsNullOrEmpty(seriesName))
-            {
-                contentFolder = season.HasValue ? Path.Combine(SanitizeFileName(seriesName), $"Season {season:D2}") : SanitizeFileName(seriesName);
-            }
-            else
-            {
-                contentFolder = "Unknown Series";
-            }
-        }
-        else
-        {
-            typeFolder = "Movies";
-            // For movies, don't create individual movie folders - place directly in Movies folder
-            contentFolder = string.Empty;
-        }
-
-        targetPath = string.IsNullOrEmpty(contentFolder) ?
-            Path.Combine(baseDirectory, typeFolder) : Path.Combine(baseDirectory, typeFolder, contentFolder);
-        if (config.EnableLogging)
-        {
-            _logger.LogInformation("Target path after media type organization: {Path}", targetPath);
-        }
-    }
-
-    // Optionally include parent folder if enabled
-    if (config.EnableParentFolders && mediaItem.Parent > 0)
-    {
-        var parentFolder = $"parent_{mediaItem.Parent.ToString(CultureInfo.InvariantCulture)}";
-        targetPath = config.OrganizeByMediaType ?
-            Path.Combine(targetPath, parentFolder) : Path.Combine(baseDirectory, parentFolder);
-        if (config.EnableLogging)
-        {
-            _logger.LogInformation("Target path after parent folder: {Path}", targetPath);
-        }
-    }
-
-    return targetPath;
-}
 
     /// <summary>
     /// Sanitizes a file name by removing invalid characters.
