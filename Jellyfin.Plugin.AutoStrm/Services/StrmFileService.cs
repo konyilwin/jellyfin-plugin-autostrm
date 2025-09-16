@@ -1,8 +1,8 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.AutoStrm.Configuration;
 using Jellyfin.Plugin.AutoStrm.Models;
@@ -246,7 +246,7 @@ public class StrmFileService
     }
 
     /// <summary>
-    /// Gets the TV series path with automatic season splitting - UPDATED VERSION.
+    /// Gets the TV series path with automatic season splitting - UPDATED VERSION with duplicate prevention.
     /// </summary>
     /// <param name="mediaItem">The media item.</param>
     /// <param name="baseDirectory">The base directory.</param>
@@ -259,17 +259,22 @@ public class StrmFileService
         var jellyfinFriendlyName = JellyfinFilenameService.CreateJellyfinFilename(mediaItem.Name, _logger);
         var (seriesName, season, episode) = MediaTypeDetector.ExtractSeriesInfo(jellyfinFriendlyName);
 
-        if (string.IsNullOrEmpty(seriesName))
-        {
-            seriesName = "Unknown Series";
-        }
+        // Normalize the series name to prevent duplicates
+        seriesName = NormalizeSeriesName(seriesName);
 
         if (config.EnableLogging)
         {
-            _logger.LogDebug("TV path generation - Original: {Original}, Jellyfin: {Jellyfin}, Series: {Series}, S{Season}E{Episode}", mediaItem.Name, jellyfinFriendlyName, seriesName, season, episode);
+            _logger.LogDebug("TV path generation - Original: {Original}, Jellyfin: {Jellyfin}, Normalized Series: {Series}, S{Season}E{Episode}", mediaItem.Name, jellyfinFriendlyName, seriesName, season, episode);
         }
 
-        var seriesFolder = Path.Combine(tvShowsFolder, SanitizeFileName(seriesName));
+        // Check for existing similar folder (case-insensitive)
+        var existingFolder = FindExistingSeriesFolder(tvShowsFolder, seriesName);
+        var seriesFolder = existingFolder ?? Path.Combine(tvShowsFolder, SanitizeFileName(seriesName));
+
+        if (config.EnableLogging && existingFolder != null)
+        {
+            _logger.LogDebug("Found existing series folder: {ExistingFolder} for series: {SeriesName}", existingFolder, seriesName);
+        }
 
         if (season.HasValue)
         {
@@ -308,6 +313,118 @@ public class StrmFileService
             }
 
             return seriesFolder;
+        }
+    }
+
+    /// <summary>
+    /// Normalizes series names to prevent duplicate folders.
+    /// </summary>
+    /// <param name="seriesName">The original series name.</param>
+    /// <returns>A normalized series name.</returns>
+    private static string NormalizeSeriesName(string seriesName)
+    {
+        if (string.IsNullOrEmpty(seriesName))
+        {
+            return "Unknown Series";
+        }
+
+        // Remove common variations and normalize
+        var normalized = seriesName.Trim()
+            .Replace("\u2019", "'", StringComparison.Ordinal) // Right single quotation mark to apostrophe
+            .Replace("\u2018", "'", StringComparison.Ordinal) // Left single quotation mark to apostrophe
+            .Replace("\u201C", "\"", StringComparison.Ordinal) // Left double quotation mark to quote
+            .Replace("\u201D", "\"", StringComparison.Ordinal) // Right double quotation mark to quote
+            .Replace(".", " ", StringComparison.Ordinal) // Replace dots with spaces
+            .Replace("_", " ", StringComparison.Ordinal) // Replace underscores with spaces
+            .Replace("  ", " ", StringComparison.Ordinal) // Replace double spaces with single spaces
+            .Trim();
+
+        // Normalize accented characters to their base form
+        normalized = RemoveAccents(normalized);
+
+        // Convert to title case for consistency
+        try
+        {
+            var textInfo = CultureInfo.CurrentCulture.TextInfo;
+            normalized = textInfo.ToTitleCase(normalized.ToLowerInvariant());
+        }
+        catch
+        {
+            // Fallback if title case conversion fails - keep original normalized value
+        }
+
+        return normalized;
+    }
+
+    /// <summary>
+    /// Removes accents and diacritical marks from text.
+    /// </summary>
+    /// <param name="text">The text to normalize.</param>
+    /// <returns>Text with accents removed.</returns>
+    private static string RemoveAccents(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        try
+        {
+            // Normalize to decomposed form (NFD) where accents are separate characters
+            var normalizedString = text.Normalize(NormalizationForm.FormD);
+            var stringBuilder = new System.Text.StringBuilder();
+
+            foreach (var c in normalizedString)
+            {
+                // Keep only characters that are not diacritical marks
+                var unicodeCategory = CharUnicodeInfo.GetUnicodeCategory(c);
+                if (unicodeCategory != UnicodeCategory.NonSpacingMark)
+                {
+                    stringBuilder.Append(c);
+                }
+            }
+
+            // Normalize back to composed form (NFC)
+            return stringBuilder.ToString().Normalize(NormalizationForm.FormC);
+        }
+        catch
+        {
+            // If normalization fails, return original text
+            return text;
+        }
+    }
+
+    /// <summary>
+    /// Finds an existing series folder with case-insensitive matching.
+    /// </summary>
+    /// <param name="tvShowsFolder">The TV shows base folder.</param>
+    /// <param name="seriesName">The series name to search for.</param>
+    /// <returns>The path to an existing folder or null if not found.</returns>
+    private static string? FindExistingSeriesFolder(string tvShowsFolder, string seriesName)
+    {
+        if (!Directory.Exists(tvShowsFolder))
+        {
+            return null;
+        }
+
+        var sanitizedTarget = SanitizeFileName(seriesName);
+
+        try
+        {
+            // Look for existing folders with similar names (case-insensitive)
+            var existingFolders = Directory.GetDirectories(tvShowsFolder)
+                .Where(dir => string.Equals(
+                    Path.GetFileName(dir),
+                    sanitizedTarget,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            return existingFolders.FirstOrDefault();
+        }
+        catch
+        {
+            // If we can't read the directory, return null
+            return null;
         }
     }
 
