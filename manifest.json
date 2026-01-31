@@ -12,8 +12,8 @@
         "version": "0.0.0.3",
         "changelog": "v0.0.0.3 release with .NET 9.0 support",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/konyilwin/jellyfin-plugin-autostrm/releases/download/v0.0.0.3/Jellyfin.Plugin.AutoStrm.dll",
-        "checksum": "d7b6c5b53a6ce609005d8c0595794acd",
+        "sourceUrl": "https://github.com/konyilwin/jellyfin-plugin-autostrm/releases/download/v0.0.0.3/Jellyfin.Plugin.AutoStrm.zip",
+        "checksum": "0c39a8e12f9d8c2006bc654fb0ac3b70",
         "timestamp": "2026-01-31T10:30:57Z"
       }
     ]
