@@ -1,16 +1,17 @@
 ---
-name: "Template"
+name: "AutoStrm"
 guid: "eb5d7894-8eef-4b36-aa6f-5d124e828ce1"
-version: "1.0.0.0"
-targetAbi: "10.9.0.0"
-framework: "net8.0"
-overview: "Short description about your plugin"
+version: "0.0.0.3"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+overview: "Auto-generate .strm files from webhooks"
 description: >
-  This is a longer description that can span more than one
-  line and include details about your plugin.
-category: "General"
-owner: "jellyfin"
+  Automatically creates .strm files from webhook data. Features smart media type detection,
+  automatic folder organization (alphabetical, smart, genre-based), duplicate handling,
+  and performance optimizations for large libraries.
+category: "Metadata"
+owner: "konyilwin"
 artifacts:
-- "Jellyfin.Plugin.Template.dll"
+- "Jellyfin.Plugin.AutoStrm.dll"
 changelog: >
-  changelog
+  v0.0.0.3 release with .NET 9.0 support
